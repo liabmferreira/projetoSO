@@ -4,12 +4,13 @@
 #TODO: Criar a flag help
 #TODO: Adicionar maneira de verificar adicao/remocao de diretorios, visto que estes nao ficam guardados na protecao, apenas ficheiros ficam
 #TODO: Arrnajar maneira de indicar alteracoes, atualmente so indica se nada fois alterado, as alteracoes feitas ficam guardadas no documento /tmp/.vp.tmp
-#TODO: O ficheiro da protecao n pode ter vp.tmp no nome
 #TODO: Resolver problemas quando se usa o -e na verificacao
 
 #Notas:
 #Se um ficheiro foi excluidos quando foi criada a protecao tambem deve ser excluido 
 #quando a protecao é verificada, senao vai dizer que esse ficheiro é novo
+
+#Os ficheiros nao podem conter espacos no nome
 
 
 #Pattern dos ficheiros guardados
@@ -33,6 +34,7 @@
 #14 Tentativa de passar argumentos para a flag -w
 #15 Tentativa de passar argumentos para a flag -y
 #16 Tentativa de usar o nome /tmp/.vp.tmp
+#17 Tentativa de guardar ficheiros com espacos no nome
 
 FICHEIROSAVE="/tmp/.pdb" #O nome final deve ser ".pdb" por default
 INCLUIDOS=()
@@ -168,10 +170,10 @@ verify(){
     head -n -1 "$PROTECTIONFILE" | sort > "/tmp/.sort.stvp.tmp"
 
     #Procura os ficheiros novos
-    [ "$AVISOS" = true ] && awk '{print "Foi adicionado o ficheiro " $1;}' <(comm -13 "/tmp/.sort.stvp.tmp" "/tmp/.sort.vp.tmp")
+    [ "$AVISOS" = true ] && awk '{print "Foi adicionado o ficheiro " $1;}' <(comm -13 <(awk '{print $1}' "/tmp/.sort.stvp.tmp") <(awk '{print $1}' "/tmp/.sort.vp.tmp"))
 
     #Procura os ficheiros removidos
-    [ "$AVISOS" = true ] && awk '{print "Foi removido o ficheiro " $1;}' <(comm -23 "/tmp/.sort.stvp.tmp" "/tmp/.sort.vp.tmp")
+    [ "$AVISOS" = true ] && awk '{print "Foi removido o ficheiro " $1;}' <(comm -13 <(awk '{print $1}' "/tmp/.sort.stvp.tmp") <(awk '{print $1}' "/tmp/.sort.vp.tmp"))
 
     #Diz ao awk para dividir pelo "|-|" e depois dividir a informacao dos segundo espaco (informacao velha)
     #e do terceiro espaco (informacao nova) pelos espacos " " para que possa ser comparada
@@ -369,6 +371,12 @@ if [[ "$FLAG_P" == true ]]; then
         if find "$file" -type f | grep -qw "|-|"; then
             [ "$AVISOS" = true ] && echo "Os ficheiros não podem conter a sequencia ' |-| ' no nome"
             exit 12
+        fi
+
+        #Da erro se algum ficheiro tiver espacos no nome
+        if find "$file" -type f | grep -q " "; then
+            [ "$AVISOS" = true ] && echo "Os ficheiros não podem conter espacos no nome"
+            exit 17
         fi
     done
 
