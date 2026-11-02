@@ -217,10 +217,10 @@ verify(){
         if (hash_antigo != hash_novo) { 
             print $1 ": o hash passou de " hash_antigo " para " hash_novo;
         }
-    }' <(join ".sort.stvp.tmp" ".sort.vp.tmp")
+    }' <(join "/tmp/.sort.stvp.tmp" "/tmp/.sort.vp.tmp")
 
-    rm ".sort.stvp.tmp"
-    rm ".sort.vp.tmp"
+    rm "/tmp/.sort.stvp.tmp"
+    rm "/tmp/.sort.vp.tmp"
 }
 
 # #endregion
