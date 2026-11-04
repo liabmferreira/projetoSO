@@ -1,20 +1,17 @@
 #!bin/bash
 
-#TODO: Verificar se estou a guardar todos os dados que o professor quer
 #TODO: Criar a flag help
-#TODO: Adicionar maneira de verificar adicao/remocao de diretorios, visto que estes nao ficam guardados na protecao, apenas ficheiros ficam
-#TODO: Arrnajar maneira de indicar alteracoes, atualmente so indica se nada fois alterado, as alteracoes feitas ficam guardadas no documento /tmp/.vp.tmp
-#TODO: Resolver problemas quando se usa o -e na verificacao
+#TODO(OPCIONAL): Deve ser possivel ignorar ficheiros durante a verificacao usando a flag -e
+#TODO: Fazer com que o v funcione de qualquer pasta (preciso de usar caminhos totais em vez de relativos)
+#TODO: A flag -x também deve tirar as permissoes dos alterado (atualmente só tira dos adicionados)
 
 #Notas:
 #Se um ficheiro foi excluidos quando foi criada a protecao tambem deve ser excluido 
 #quando a protecao é verificada, senao vai dizer que esse ficheiro é novo
-
 #Os ficheiros nao podem conter espacos no nome
 
-
 #Pattern dos ficheiros guardados
-#nome |-| permissoes dono data/hora espaco hash
+#nome |-| permissoes dono grupo data/hora espaco hash
 
 #Codigos de saida
 #0 funcionamento normal
@@ -35,14 +32,16 @@
 #15 Tentativa de passar argumentos para a flag -y
 #16 Tentativa de usar o nome /tmp/.vp.tmp
 #17 Tentativa de guardar ficheiros com espacos no nome
+#18 Tentativa de passar argumentos para a flag -x
 
-FICHEIROSAVE="/tmp/.pdb" #O nome final deve ser ".pdb" por default
+FICHEIROSAVE="/tmp/.pdb" #O nome final deve ser "/tmp/.pdb" por default
 INCLUIDOS=()
 EXCLUIDOS=()
 ALTERADO=false
 AVISOS=true
 ENCRYPTED=false
 OVERWRITE=false
+BLOQUEAR=false
 PASSWORD=''
 
 FLAG_P=false
@@ -52,10 +51,26 @@ FLAG_V=false
 protect(){
     INCLUIDOS=("$@")
 
+    #Imprime "EXCLUIDOS" na primeira linha caso existam ficheiros excluidos
+    echo -n "INCLUIDOS "
+    if [ ${#EXCLUIDOS[@]} != 0 ]; then
+        echo "EXCLUIDOS"
+    else
+        echo ""
+    fi
+
     #Chama a funcao que vai escrever na protecao toda a informacao de cada ficheiro pedido
     for file in "${INCLUIDOS[@]}"; do
         protectFile $file
     done
+
+    #Guarda o nome dos ficheiros/pastas excluidos na penultima linha da protecao
+    if [ ${#EXCLUIDOS[@]} != 0 ]; then
+        for file in "${EXCLUIDOS[@]}"; do
+            echo -n "$file " 
+        done
+        echo "" #Troca de linha
+    fi
 
     #Guarda o nome dos ficheiros/pastas protegidos na ultima linha da protecao
     for file in "${INCLUIDOS[@]}"; do
@@ -108,7 +123,7 @@ protectFile(){
     mapfile -t hashes_array < <(printf '%s\0' "${files_array[@]}" | xargs -0 sha256sum | cut -d' ' -f1)
 
     #Gerar todos os metadados e colocar numa array
-    mapfile -t data_array < <(printf '%s\0' "${files_array[@]}" | xargs -0 stat -c "%A %U %y %s")
+    mapfile -t data_array < <(printf '%s\0' "${files_array[@]}" | xargs -0 stat -c "%A %G %U %y %s")
 
     #Escreve já formatado a informação de cada ficheiro da array no FICHEIROSAVE
     for i in "${!files_array[@]}"; do
@@ -155,8 +170,10 @@ verify(){
         fi
     fi
 
+    if  head -n 1 "$PROTECTIONFILE" | grep -q "EXCLUIDOS"; then
+        EXCLUIDOS=($(tail -n 2 "$PROTECTIONFILE" | head -n 1))
+    fi
     protect $(tail -n 1 "$PROTECTIONFILE") > "/tmp/.vp.tmp"
-
     
     if  cmp -s "/tmp/.vp.tmp" "$PROTECTIONFILE"; then
         [ "$AVISOS" = true ] && echo "Os ficheiros não foram alterados" 
@@ -164,16 +181,33 @@ verify(){
         exit 0
     fi
 
-    head -n -1 "/tmp/.vp.tmp" | sort > "/tmp/.sort.vp.tmp"
+    if head -n 1 "/tmp/.vp.tmp"| grep -q "EXCLUIDOS"; then
+        head -n -2 "/tmp/.vp.tmp" | tail -n +2 | sort > "/tmp/.sort.vp.tmp"
+    else
+        head -n -1 "/tmp/.vp.tmp" | tail -n +2 | sort > "/tmp/.sort.vp.tmp"
+    fi
+
     rm -f "/tmp/.vp.tmp"
 
-    head -n -1 "$PROTECTIONFILE" | sort > "/tmp/.sort.stvp.tmp"
+    if head -n 1 "$PROTECTIONFILE"| grep -q "EXCLUIDOS"; then
+        head -n -2 "$PROTECTIONFILE" | tail -n +2 | sort > "/tmp/.sort.stvp.tmp"
+    else
+        head -n -1 "$PROTECTIONFILE" | tail -n +2 | sort > "/tmp/.sort.stvp.tmp"
+    fi
 
     #Procura os ficheiros novos
-    [ "$AVISOS" = true ] && awk '{print "Foi adicionado o ficheiro " $1;}' <(comm -13 <(awk '{print $1}' "/tmp/.sort.stvp.tmp") <(awk '{print $1}' "/tmp/.sort.vp.tmp"))
+    comm -13 <(awk '{print $1}' "/tmp/.sort.stvp.tmp") <(awk '{print $1}' "/tmp/.sort.vp.tmp") > /tmp/.new.vp.tmp
+
+    #Retira as permissoes de execucao dos ficheiros novos
+    if [[ "$BLOQUEAR" == "true" ]]; then
+        xargs -a /tmp/.new.vp.tmp chmod -x
+    fi
+
+    #Exibe os ficheiros novos
+    [ "$AVISOS" = true ] && awk '{print "Foi adicionado o ficheiro " $1;}' /tmp/.new.vp.tmp
 
     #Procura os ficheiros removidos
-    [ "$AVISOS" = true ] && awk '{print "Foi removido o ficheiro " $1;}' <(comm -13 <(awk '{print $1}' "/tmp/.sort.stvp.tmp") <(awk '{print $1}' "/tmp/.sort.vp.tmp"))
+    [ "$AVISOS" = true ] && awk '{print "Foi removido o ficheiro " $1;}' <(comm -23 <(awk '{print $1}' "/tmp/.sort.stvp.tmp") <(awk '{print $1}' "/tmp/.sort.vp.tmp"))
 
     #Diz ao awk para dividir pelo "|-|" e depois dividir a informacao dos segundo espaco (informacao velha)
     #e do terceiro espaco (informacao nova) pelos espacos " " para que possa ser comparada
@@ -183,21 +217,23 @@ verify(){
         split($2, info_antiga, " ");
         permissoes_antigas = info_antiga[1];
         dono_antigo = info_antiga[2];
-        data_antiga = info_antiga[3];
-        hora_antiga = info_antiga[4];
-        fuso_antigo = info_antiga[5];
-        espaco_antigo = info_antiga[6];
-        hash_antigo = info_antiga[7];
+        grupo_antigo = info_antiga[3];
+        data_antiga = info_antiga[4];
+        hora_antiga = info_antiga[5];
+        fuso_antigo = info_antiga[6];
+        espaco_antigo = info_antiga[7];
+        hash_antigo = info_antiga[8];
 
         # Divide a informacao nova pelos espacos e coloca-a em variaveis
         split($3, info_nova, " ");
         permissoes_novas = info_nova[1];
         dono_novo = info_nova[2];
-        data_nova = info_nova[3];
-        hora_nova = info_nova[4];
-        fuso_novo = info_nova[5];
-        espaco_novo = info_nova[6];
-        hash_novo = info_nova[7];
+        grupo_novo = info_nova[3];
+        data_nova = info_nova[4];
+        hora_nova = info_nova[5];
+        fuso_novo = info_nova[6];
+        espaco_novo = info_nova[7];
+        hash_novo = info_nova[8];
 
         #Compara as variaveis e imprime os resultados no terminal
         if (permissoes_antigas != permissoes_novas) { 
@@ -206,6 +242,10 @@ verify(){
 
         if (dono_antigo != dono_novo) { 
             print $1 ": o dono passou de " dono_antigo " para " dono_novo;
+        }
+
+        if (grupo_antigo != grupo_novo) { 
+            print $1 ": o grupo passou de " grupo_antigo " para " grupo_novo;
         }
 
         if (data_antiga != data_nova || hora_antiga != hora_nova || fuso_antigo != fuso_novo) { 
@@ -228,7 +268,7 @@ verify(){
 # #endregion
 
 # #region Leitura e Interpretacao de flags
-while getopts ":pef:vwhys:" arg; do
+while getopts ":pef:vwhys:x" arg; do
     case $arg in
         #Especifica 1 ou mais pastas/ficheiros para proteger
         p)
@@ -326,6 +366,14 @@ while getopts ":pef:vwhys:" arg; do
             OVERWRITE=true
         ;;
 
+        x)
+            if [[ -n "${!OPTIND}" && "${!OPTIND}" != -* ]]; then
+                [ "$AVISOS" = true ] && echo "A flag -x não aceita argumentos"
+                exit 18
+            fi
+            BLOQUEAR=true
+        ;;
+
         :)
             [ "$AVISOS" = true ] && echo "A flag -${OPTARG} recebe exatamente 1 argumento"
 
@@ -413,5 +461,6 @@ fi
 #Executa com a flag -v
 if [[ "$FLAG_V" == true ]]; then
     verify "$FICHEIROSAVE"
+    exit 0
 fi 
 # #endregion
