@@ -1,7 +1,6 @@
 #!bin/bash
 
 #TODO: Criar a flag help
-#TODO(OPCIONAL): Deve ser possivel ignorar ficheiros durante a verificacao usando a flag -e
 #TODO: Fazer com que o v funcione de qualquer pasta (preciso de usar caminhos totais em vez de relativos)
 #TODO: A flag -x também deve tirar as permissoes dos alterado (atualmente só tira dos adicionados)
 
