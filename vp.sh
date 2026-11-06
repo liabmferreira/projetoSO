@@ -1,37 +1,47 @@
-#!bin/bash
-
-#TODO: Criar a flag help
-#TODO: Fazer com que o v funcione de qualquer pasta (preciso de usar caminhos totais em vez de relativos)
-#TODO: A flag -x também deve tirar as permissoes dos alterado (atualmente só tira dos adicionados)
+#!/bin/bash
 
 #Notas:
-#Se um ficheiro foi excluidos quando foi criada a protecao tambem deve ser excluido 
-#quando a protecao é verificada, senao vai dizer que esse ficheiro é novo
 #Os ficheiros nao podem conter espacos no nome
 
 #Pattern dos ficheiros guardados
 #nome |-| permissoes dono grupo data/hora espaco hash
 
-#Codigos de saida
-#0 funcionamento normal
-#1 pasta/ficheiro a proteger não encontrado
-#2 A flag -p foi usada sem ficheiros/pastas para proteger
-#3 A flag -e foi usada sem ficheiros/pastas para excluir
-#4 A flag -f recebeu mais/menos de uma argumento
-#5 O programa foi exxecutado em modo protecao -p e verificaco -v ao mesmo tempo
-#6 Foi passada uma flag que não existe
-#7 A flag -v recebeu argumentos
-#8 A flag -f recebeu o nome de uma protecao que não existe
-#9 A flag -s recebeu mais/menos de um argumento
-#10 Tentativa de ler um ficheiro nao encriptado usando password
-#11 Erro ao desencriptar o ficheiro
-#12 O nome dos ficherios a gaurdar não pode conter " |-| "
-#13 Tentativa de ler um ficheiro encriptado sem usar palavra passe
-#14 Tentativa de passar argumentos para a flag -w
-#15 Tentativa de passar argumentos para a flag -y
-#16 Tentativa de usar o nome /tmp/.vp.tmp
-#17 Tentativa de guardar ficheiros com espacos no nome
-#18 Tentativa de passar argumentos para a flag -x
+readonly HELP_TEXT=$(cat << 'EOF'
+   Uso: vp.sh [flags_sem_argomentos] [flag_com_argomentos] [argomentos] ...
+
+    Flags:
+    -p   Cria uma protecao com os ficheiros especificados
+    -v   Verifica a integridade dos ficheiros protegidos
+    -e   Exclui os ficheiros especificados
+    -f   Especifica o nome da protecao
+    -x   Bloqueia as permissões de execução dos ficheiros alterados/adicionados
+    -s   Enncripta/Desencripta com a password especificada
+    -w   Desativa todos os avisos
+    -y   Aceita automaticamente sobscrever a protecao guardada
+    -h   Ajuda
+
+    Exit status:
+    0 Funcionamento normal
+    1 pasta/ficheiro a proteger não encontrado
+    2 A flag -p foi usada sem argumentos
+    3 A flag -e foi usada sem argumentos
+    4 A flag -f foi usada mais/menos de um argumento
+    5 O programa foi exxecutado em modo protecao -p e verificaco -v ao mesmo tempo
+    6 Foi passada uma flag que não existe
+    7 A flag -v foi usada com argumentos
+    8 A flag -f foi usada com o nome de uma protecao que não existe
+    9 A flag -s foi usada mais/menos de um argumento
+    10 Tentativa de ler um ficheiro nao encriptado usando password
+    11 Erro ao desencriptar o ficheiro
+    12 O nome dos ficheiros a gaurdar não pode conter " |-| "
+    13 Tentativa de ler um ficheiro encriptado sem usar palavra passe
+    14 A flag -w foi usada com argumentos
+    15 A flag -y foi usada com argumentos
+    16 Tentativa de usar o nome /tmp/.vp.tmp para a protecao
+    17 Tentativa de guardar ficheiros com espacos no nome
+    18 A flag -x foi usada com argumentos
+EOF
+)
 
 FICHEIROSAVE="/tmp/.pdb" #O nome final deve ser "/tmp/.pdb" por default
 INCLUIDOS=()
@@ -66,14 +76,18 @@ protect(){
     #Guarda o nome dos ficheiros/pastas excluidos na penultima linha da protecao
     if [ ${#EXCLUIDOS[@]} != 0 ]; then
         for file in "${EXCLUIDOS[@]}"; do
-            echo -n "$file " 
+            if [[ -e "$file" ]]; then
+                echo -n "$(realpath "$file") " 
+            else
+                echo -n "$file "
+            fi
         done
         echo "" #Troca de linha
     fi
 
     #Guarda o nome dos ficheiros/pastas protegidos na ultima linha da protecao
     for file in "${INCLUIDOS[@]}"; do
-        echo -n "$file " 
+        echo -n "$(realpath "$file") " 
     done
 
 } 
@@ -82,7 +96,7 @@ protectFile(){
     local FICHEIRO=$1
 
     #Coloca o nome de todos os ficheiros encontados na pasta/ficheiro numa array
-    mapfile -t files_array < <(find "$FICHEIRO" -type f)
+    mapfile -t files_array < <(find $(realpath "$FICHEIRO") -type f)
 
     #Caso haja ficheiros excluidos vai removelos da array
     cleaned_files_array=()
@@ -91,6 +105,11 @@ protectFile(){
             excluded=false
 
             for excludedfile in "${EXCLUIDOS[@]}"; do
+
+                #Caso seja passado um ficheiro real (em vez de um pattern), é usado o caminho completo
+                if [[ -e "$excludedfile" ]]; then
+                    excludedfile="$(realpath "$excludedfile")" 
+                fi
 
                 #Permite a remocao de diretorios inteiros sem ter de escrever diretorio/*
                 if [ -d $excludedfile ]; then
@@ -169,17 +188,22 @@ verify(){
         fi
     fi
 
+    #Adiciona os excluidos da protecao guardada para serem automaticamente excluidos da protecao temporaria de comparacao
     if  head -n 1 "$PROTECTIONFILE" | grep -q "EXCLUIDOS"; then
         EXCLUIDOS=($(tail -n 2 "$PROTECTIONFILE" | head -n 1))
     fi
+
+    #Cria um ficheiro protecao para comparar com o antigo
     protect $(tail -n 1 "$PROTECTIONFILE") > "/tmp/.vp.tmp"
     
+    #Encerra logo a verificacao caso nada tenha sido alterado
     if  cmp -s "/tmp/.vp.tmp" "$PROTECTIONFILE"; then
         [ "$AVISOS" = true ] && echo "Os ficheiros não foram alterados" 
         rm -f "/tmp/.vp.tmp"
         exit 0
     fi
 
+    #Limpa e ordenada a protecao temporaria de comparacao
     if head -n 1 "/tmp/.vp.tmp"| grep -q "EXCLUIDOS"; then
         head -n -2 "/tmp/.vp.tmp" | tail -n +2 | sort > "/tmp/.sort.vp.tmp"
     else
@@ -188,6 +212,7 @@ verify(){
 
     rm -f "/tmp/.vp.tmp"
 
+    #Limpa e ordena a protecao guardada
     if head -n 1 "$PROTECTIONFILE"| grep -q "EXCLUIDOS"; then
         head -n -2 "$PROTECTIONFILE" | tail -n +2 | sort > "/tmp/.sort.stvp.tmp"
     else
@@ -210,6 +235,42 @@ verify(){
 
     #Diz ao awk para dividir pelo "|-|" e depois dividir a informacao dos segundo espaco (informacao velha)
     #e do terceiro espaco (informacao nova) pelos espacos " " para que possa ser comparada
+    #Serve para guardar os ficheiros alterados num ficheiro temporario
+    awk -F ' \\|-\\| ' ' 
+    {
+        split($2, info_antiga, " ");
+        split($3, info_nova, " ");
+
+        # Se qualquer um dos campos for diferente, imprime apenas o nome do ficheiro ($1)
+        if (info_antiga[1] != info_nova[1] || 
+            info_antiga[2] != info_nova[2] || 
+            info_antiga[3] != info_nova[3] || 
+            info_antiga[4] != info_nova[4] || 
+            info_antiga[5] != info_nova[5] || 
+            info_antiga[6] != info_nova[6] || 
+            info_antiga[7] != info_nova[7] || 
+            info_antiga[8] != info_nova[8]) {
+            print $1 " |-| " $2 " |-| " $3;
+        }
+    }' <(join "/tmp/.sort.stvp.tmp" "/tmp/.sort.vp.tmp") > "/tmp/.alterados.vp.tmp"
+
+    rm "/tmp/.sort.stvp.tmp"
+    rm "/tmp/.sort.vp.tmp"
+
+    #Encerra a verificacao caso não existam ficheiros alterados
+    if [ ! -s "/tmp/.alterados.vp.tmp" ]; then
+        rm "/tmp/.alterados.vp.tmp"
+        exit 0
+    fi
+
+    #Usado para bloquear as permissoes de execucoes de ficheiros que foram alterados
+    if [[ "$BLOQUEAR" == "true" ]]; then
+        xargs -a <(awk '{print $1;}' "/tmp/.alterados.vp.tmp") chmod -x
+    fi
+
+    #Diz ao awk para dividir pelo "|-|" e depois dividir a informacao dos segundo espaco (informacao velha)
+    #e do terceiro espaco (informacao nova) pelos espacos " " para que possa ser comparada
+    #Já só verifica os que foram alterados e imprime o que foi alterado
     [ "$AVISOS" = true ] && awk -F ' \\|-\\| ' ' 
     {
         # Divide a informacao antiga pelos epacos e coloca-a em variaveis
@@ -258,10 +319,9 @@ verify(){
         if (hash_antigo != hash_novo) { 
             print $1 ": o hash passou de " hash_antigo " para " hash_novo;
         }
-    }' <(join "/tmp/.sort.stvp.tmp" "/tmp/.sort.vp.tmp")
+    }' "/tmp/.alterados.vp.tmp"
 
-    rm "/tmp/.sort.stvp.tmp"
-    rm "/tmp/.sort.vp.tmp"
+    rm "/tmp/.alterados.vp.tmp"
 }
 
 # #endregion
@@ -328,7 +388,8 @@ while getopts ":pef:vwhys:x" arg; do
         ;;
 
         h)
-            #TODO: help flag
+            echo "$HELP_TEXT"
+            exit 0
         ;;
 
         w)
@@ -427,12 +488,12 @@ if [[ "$FLAG_P" == true ]]; then
         fi
     done
 
-    #Pergunta ao utilizador se deseja subscrever uma protecao já existente
+    #Pergunta ao utilizador se deseja sobscrever uma protecao já existente
     if [[ $OVERWRITE == true ]]; then
         rm -f "$FICHEIROSAVE"
     else
         if [[ -f "$FICHEIROSAVE" ]]; then
-            read -p "O ficheiro de protecao $FICHEIROSAVE já existe, deseja subscrever?(y/n) " res
+            read -p "O ficheiro de protecao $FICHEIROSAVE já existe, deseja sobscrever?(y/n) " res
             if [ "$res" != 'y' ]; then
                 exit 0
             fi
@@ -453,8 +514,13 @@ if [[ "$FLAG_P" == true ]]; then
 
     chmod -w "$FICHEIROSAVE"
 
-    [ "$AVISOS" = true ] && echo "A protecao $FICHEIROSAVE foi criada com $(wc -l < <(head -n -1 $FICHEIROSAVE)) ficheiros"
-    exit 0
+    if [[ ${#EXCLUIDOS[@]} == 0 ]]; then
+        [ "$AVISOS" = true ] && echo "A protecao $FICHEIROSAVE foi criada com $(( $(wc -l < "$FICHEIROSAVE") -1 )) ficheiros"
+        exit 0
+    else
+        [ "$AVISOS" = true ] && echo "A protecao $FICHEIROSAVE foi criada com $(( $(wc -l < "$FICHEIROSAVE") -2 )) ficheiros"
+        exit 0
+    fi
 fi  
 
 #Executa com a flag -v
